@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# CCP 门禁 — 防止 Hermes 越权执行硬件操作
-# 写入 /etc/profile.d/ccp_gate.sh（全局生效）
-# 或追加到 ~/.bashrc（用户生效）
+# CCP 提醒钩子（已降级） — 不再作为安全边界
+# 
+# v3 变更：真正的安全边界已由 Linux 用户/设备权限接管。
+# 这个脚本只剩下提醒功能，防止无意的交互式误操作。
+# 
+# 安全边界看这里：
+# - /etc/udev/rules.d/99-stlink-ccp.rules → ccpd 组独占 ST-Link
+# - 用户 llw 不在 ccpd 组 → openocd 连不上 ST-Link
+# - 绕过需要 sudo → LLM 做不到
 
 CCP_LOCK_FILE="/tmp/ccp_daemon.lock"
 
@@ -10,25 +16,20 @@ ccp_is_running() {
     kill -0 $(cat "$CCP_LOCK_FILE" 2>/dev/null) 2>/dev/null
 }
 
-# 被禁止的命令列表 — 只要 CCP daemon 在运行，这些命令对 Hermes 就是禁用的
-FORBIDDEN_CMDS=(
-  openocd
-  scons
-  arm-none-eabi-gdb
-  arm-none-eabi-gdb-py
-  st-flash
-  stlink-gui
-  cuav-v5-bl
-)
+# ⚠️ 以下仅提醒，不拦截
+# bash 函数无法拦截: /usr/bin/openocd, subprocess, 非交互 shell 等
+FORBIDDEN_CMDS=(openocd scons arm-none-eabi-gdb st-flash)
 
 for _cmd in "${FORBIDDEN_CMDS[@]}"; do
   eval "
     $_cmd() {
       if ccp_is_running; then
-        echo '[CCP-GATE] ❌ 禁止：$_cmd 由 CCP daemon 管理。Hermes 不得执行硬件操作。' >&2
-        return 1
+        echo '[CCP-REMINDER] daemon 正在管理 ST-Link。你确定要手动操作？输入 YES 继续:' >&2
+        read confirm
+        [ \"\$confirm\" = \"YES\" ] && command $_cmd \"\$@\"
+      else
+        command $_cmd \"\$@\"
       fi
-      command $_cmd \"\$@\"
     }
   "
 done
